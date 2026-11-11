@@ -1,30 +1,46 @@
 # Bellhaven CRM reconciliation
 
-A Python assessment project to reconcile Bellhaven Senior Living's published facility directory with an authenticated CRM. It uses evidence-based matching, a human approval interface and a separately scheduled **read-only** monitor. No scheduled job is authorised to modify CRM accounts or contacts.
+I compared Bellhaven Senior Living's published facility directory with the assessment CRM, investigated the discrepancies and applied the approved corrections. The website establishes which facilities Bellhaven currently advertises. It does not establish a facility's ownership history or whether a historical account should remain active. Unfortunately, the directory does not include an ownership ledger.
 
-## Verified assessment result
+The reconciliation therefore distinguishes current facilities from accounts belonging to other parent organisations, duplicate records and coincidental name matches. CRM changes require a recorded reviewer decision. Daily monitoring is read-only.
 
-| Measure | Verified result |
+## Results as at 11 November 2026
+
+| Measure | Result |
 | --- | ---: |
-| Published facilities discovered | 35 |
-| Active Bellhaven facility accounts matched by address and name | 34 |
-| Legitimate billing-address exception (Ashtabula PO Box) | 1 |
-| Unresolved current-facility matches | 0 |
-| Live CRM accounts after corrections | 127 |
-| Reviewer decisions | 19 applied, 1 rejected, 7 held for investigation |
-| Daily monitor | Two consecutive local read-only runs passed, with zero CRM writes |
+| Facilities identified on the website | 35 |
+| Current CRM facilities matched by name and location | 34 |
+| Documented billing-address exception, Ashtabula | 1 |
+| Website facilities without a valid current CRM match | 0 |
+| CRM accounts following approved corrections | 127 |
+| Reviewer decisions | 19 applied, 1 rejected, 7 requiring further review |
+| Daily monitoring | Two local runs and one GitHub-hosted run passed; 0 CRM writes |
 
-The seven Holds are not resolved operational cases. They preserve potentially historical or website-absent records pending further evidence. The CRM was not automatically modified for those findings.
+All 35 published facilities have been accounted for. Ashtabula uses a PO Box for billing, whereas the website lists its physical address. I retained the distinction. There was insufficient evidence to conclude that either address was incorrect.
 
-## How the system works
+Seven proposals remain under review and no changes were made to the associated accounts. Four concern accounts under other parent organisations at addresses now associated with Bellhaven. Three concern Bellhaven accounts absent from the current website directory. Absence from the directory does not establish closure; nor does a shared address establish whether an earlier account ought to be deactivated. I rejected one proposed match because its name agreed but its location did not.
 
-1. **Discovery:** `main.py` follows the paginated `/communities` directory and the site's homepage links. The homepage supplies an additional Findlay facility not covered by the paginated listing. `facility_probe.py` extracts address and care offerings from individual facility pages.
-2. **Matching:** Physical street, city, state and ZIP are used to establish facility identity. Name-only matches are insufficient. Normalisation recognises common street abbreviations. Ashtabula's CRM billing PO Box is kept distinct from its published physical address.
-3. **Reviewer workflow:** `review_app.py` shows source evidence and current live CRM state. The reviewer can stage approval, apply an approved change or reject it. Uncertain situations can be explicitly placed on Hold. Decisions are persisted locally and completed proposals are not resubmitted automatically.
-4. **Guarded writes:** `crm_writer.py`, `create_writer.py`, `zip_writer.py`, `duplicate_writer.py` and `rename_writer.py` enforce action-specific preconditions. Name corrections patch only `name`; ZIP corrections patch only the reviewed billing ZIP. The duplicate-resolution flow preserves contacts. If a change of ownership involves **both** positive lifetime revenue and positive outstanding receivables, the historical account and balances are preserved and a separately parented successor is linked using `chow_current_account`.
-5. **Daily monitoring:** `daily_monitor.py` runs the existing scraper in an isolated temporary directory, fetches fresh CRM data using GET requests and writes a local `latest_daily_report.json`. It never runs CRM write callbacks or changes the original website snapshot, original CRM baseline or reviewer decisions. New or removed website entries and unresolved matches require human investigation.
+## Collection and matching
 
-## Install and run the public read-only monitor
+`main.py` follows the paginated `/communities` directory and checks the homepage for additional facility links. That additional check identified Findlay, which was not returned by the directory pages. `facility_probe.py` retrieves the individual facilities' addresses and advertised care offerings. The findings are saved in `bellhaven_facilities.json`, a snapshot of the public website at the time of collection.
+
+Matching uses street address, city, state and ZIP code, with common street abbreviations normalised. A name match alone is insufficient: the dataset contains the same facility name at different locations. CRM billing addresses may also differ from a facility's physical address, as the Ashtabula record demonstrates. Neither distinction can safely be disregarded.
+
+Each proposed correction appears in the reviewer alongside website evidence and a fresh read of the CRM account. Staging approval and applying a correction are separate operations. Rejected proposals and those requiring further investigation remain recorded.
+
+The write procedures have distinct responsibilities:
+
+- `crm_writer.py` handles reparenting and changes of ownership.
+- `create_writer.py` checks for existing accounts before creation and can recognise a completed creation after an interrupted API response.
+- `zip_writer.py` updates the approved billing ZIP field.
+- `duplicate_writer.py` preserves contacts when resolving a duplicate account.
+- `rename_writer.py` applies a name correction and verifies the resulting record.
+
+Each procedure limits its submitted changes to the fields relevant to the approved action. This reduces the scope of possible side effects and permits the different failure conditions to be tested separately.
+
+Changes of ownership require particular care when an original account has both positive lifetime revenue and positive outstanding receivables. In those circumstances, the original account retains its parent organisation and balances. A separate Bellhaven successor account is created and linked through `chow_current_account`. A tidy parent hierarchy is a poor reason to rewrite financial history.
+
+## Installation and daily monitoring
 
 Python 3.12 is recommended.
 
@@ -34,33 +50,43 @@ source .venv/bin/activate
 python -m pip install -r requirements.txt
 ```
 
-Create a local `.env` file containing the assessment CRM token:
+Create a local `.env` file containing an authorised assessment CRM token:
 
 ```dotenv
 CRM_API_TOKEN=replace_with_your_own_token
 ```
 
-The `.env` file must **never** be committed. Do not use the placeholder as a real credential. A valid, authorised assessment token and access to the supplied website/API are required for live CRM checks.
+Live CRM reads require this token. The `.env` file is excluded from Git and must not be committed.
 
 ```bash
 python daily_monitor.py
 ```
 
-The command writes `latest_daily_report.json` locally, reporting facility coverage, exceptions and review findings. It makes **no** CRM modifications. The checked-in `bellhaven_facilities.json` is a public-website reference snapshot, not a copy of private CRM data.
+`daily_monitor.py` obtains a fresh website snapshot in a temporary directory, retrieves current CRM accounts and compares the two. It writes `latest_daily_report.json` locally. It does not execute CRM write procedures or alter the existing reference snapshot and reviewer decisions.
 
-## Human approval interface
+The report distinguishes unmatched current facilities from other cases requiring investigation, including changed website listings, accounts absent from the current directory and accounts under different parent organisations at the same address.
 
-On the original assessment workstation, with the private proposal files and `review_decisions.json` present, run:
+## Reviewer applications
+
+The populated live reviewer runs on the assessment workstation, where the private proposals and reviewer decisions are available:
 
 ```bash
 python -m streamlit run review_app.py
 ```
 
-The reviewer fetches live CRM evidence before approval. A proposal must be explicitly staged and then applied; an ordinary monitoring run never approves changes. The actual proposal and decision JSON files contain account-level evidence and are intentionally excluded from this public repository. **Consequently, a clean public clone can run the read-only monitor with authorised credentials, but cannot launch the populated reviewer without the private local proposal data.** A separate synthetic demonstration fixture, if distributed, must not be confused with the live decision history.
+These files contain account-level CRM information and have been excluded from the public repository. A fresh public checkout cannot reproduce the populated live reviewer without the private proposal data and authorised CRM access.
 
-## Testing
+A separate demonstration reviewer is available:
 
-Offline writer-safety tests are provided:
+```bash
+python -m streamlit run demo_reviewer.py
+```
+
+`demo_reviewer.py` uses synthetic facilities and in-memory accounts. It demonstrates staging, applying, rejecting and marking a proposal for further review without credentials or CRM requests. Its simulated changes are not evidence of additional live CRM corrections.
+
+## Tests and verification
+
+The offline safety checks can be run individually:
 
 ```bash
 python test_writer_guard.py
@@ -70,20 +96,32 @@ python test_duplicate_offline.py
 python test_rename_offline.py
 ```
 
-These use mocks and are intended not to write to the live CRM. `audit_full_coverage.py` checks current facility coverage against live CRM records on the original working environment. Successful writer unit tests are not a substitute for a full hosted-workflow test.
+All five test files passed from a fresh public GitHub checkout. They exercise action-type restrictions, approval requirements, duplicate prevention, recovery after an interrupted API response, contact preservation and repeat-run behaviour. They use mocks and synthetic or temporary fixtures. They verify the implemented logic under the conditions tested, rather than every failure a live API might produce.
 
-## Scheduled execution
+`audit_full_coverage.py` compares the website facilities with current CRM records. The final live audit found 34 standard matches, one documented billing-address exception and no unmatched current facilities.
 
-`.github/workflows/daily-monitor.yml` runs the **read-only** monitor daily at **16:17 UTC**, and also supports manual `workflow_dispatch`. Its `CRM_API_TOKEN` must be configured as a GitHub Actions repository secret. It uploads an aggregate-only report and flags changed website entries or unresolved matches. GitHub schedules can be delayed. The hosted workflow should be manually run and verified after repository publication; local success does not establish hosted success.
+Two consecutive local monitoring runs returned identical counts. A manually triggered GitHub Actions execution also passed:
 
-## Safety and limitations
+[GitHub Actions run 42976545749](https://github.com/p-hereford/bellhaven-crm-reconciliation/actions/runs/42976545749)
 
-- No automated deactivation follows from website absence. The known website-absent accounts and competing historical ownership records remain review findings.
-- Matching relies on the source website and account data being accurate; shared addresses and naming changes are not in themselves proof of historical ownership.
-- The directory/reference snapshot has 35 facilities at the assessment date. A significant unexpected drop fails validation rather than silently deleting facility matches.
-- A post-PATCH check detects unexpected protected-field changes, but does not automatically undo them; a partially completed write may require investigation and recovery.
-- Private proposal JSON, decisions, account-level reports, lock files and API credentials are deliberately excluded from Git. The public `public_results_summary.json` contains only aggregate counts.
+The hosted run, completed on 11 November 2026 UTC, reported 35 website facilities, 127 CRM accounts, no unresolved current-facility matches and no CRM writes.
 
-## Development and AI assistance
+## Schedule
 
-AI assistance was used in drafting and reviewing parts of the code, tests and documentation. The candidate operated the reviewer, approved or held the live changes and verified results against the API. The assessment write-up should separately report the candidate's **actual** time spent, rather than an estimate.
+`.github/workflows/daily-monitor.yml` is configured to run daily at 16:17 UTC and supports manual execution through `workflow_dispatch`. The CRM token is supplied through the repository's `CRM_API_TOKEN` secret. Published artefacts contain aggregate counts rather than account or contact details.
+
+The workflow reports changes or discrepancies for human investigation. It cannot approve or apply corrections to the CRM. GitHub may delay scheduled executions. The manually triggered hosted run has passed; an unattended scheduled run has not yet been observed.
+
+## Limits of the result
+
+The website and CRM are both evidence sources, and either may contain omissions or inaccuracies. The historical ownership cases and three Bellhaven accounts absent from the current directory remain unresolved. I have not interpreted website absence as proof of closure.
+
+The write procedures recheck relevant live fields before modification, and post-write checks detect unexpected differences. Such findings require investigation; the procedures do not automatically reverse an unexpected change. Where an API call succeeds but the response is lost, the relevant writer must establish whether the operation completed before proceeding.
+
+The public repository contains source code, the public website snapshot, the synthetic demonstration, offline tests and aggregate results. Private proposals, account-level CRM exports, reviewer decisions, lock files and credentials are excluded.
+
+## AI assistance and time spent
+
+AI is not an operational component of this workflow. I used it to consult documentation more efficiently and reduce manual typing, as I would when developing a one-off script. The pipeline makes no LLM calls. Matching 35 facilities against the CRM using address, city, state and ZIP does not require one; deterministic matching also permits the relevant rules to be tested offline. An LLM could be added to assist with ambiguous name matches or reviewer notes, although those outputs would require separate evaluation. Such an addition would not require rebuilding the existing collection and matching procedures.
+
+I did not require an LLM for the reconciliation itself. Its absence was a technical choice, rather than a limitation of what I can develop.
