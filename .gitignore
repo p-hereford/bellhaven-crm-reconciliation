@@ -1,0 +1,33 @@
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+
+# Python and IDE files
+.venv/
+__pycache__/
+.idea/
+.pytest_cache/
+.DS_Store
+
+# Private CRM data, reviewer decisions and generated reports
+*.json
+*.jsonl
+*.csv
+*.tsv
+
+# Public website reference snapshot required by daily monitoring
+!bellhaven_facilities.json
+
+# Logs, temporary files and local backups
+*.log
+*.tmp
+*.bak
+*_before_*.py
+*_backup*.py
+
+# Runtime lock files
+*.lock
+
+# Sanitised public results
+!public_results_summary.json

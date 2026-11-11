@@ -1,0 +1,90 @@
+name: Bellhaven daily read-only reconciliation
+
+on:
+  schedule:
+    # 16:17 UTC daily (08:17 PST / 09:17 PDT).
+    - cron: '17 16 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bellhaven-daily-monitor
+  cancel-in-progress: false
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      CRM_API_TOKEN: ${{ secrets.CRM_API_TOKEN }}
+      PYTHONDONTWRITEBYTECODE: '1'
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install minimal read-only dependencies
+        run: python -m pip install 'beautifulsoup4>=4.12,<5' 'python-dotenv>=1.0,<2'
+
+      - name: Require CRM token in repository secrets
+        shell: bash
+        run: |
+          if [ -z "$CRM_API_TOKEN" ]; then
+            echo '::error::CRM_API_TOKEN repository secret is missing.'
+            exit 1
+          fi
+
+      - name: Reconcile website against live CRM without writes
+        run: python daily_monitor.py
+
+      - name: Export aggregate-only report
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          source = Path('latest_daily_report.json')
+          if source.is_file():
+              report = json.loads(source.read_text(encoding='utf-8'))
+              public_summary = {
+                  'status': report['status'],
+                  'generated_at_utc': report['generated_at_utc'],
+                  'summary': report['summary'],
+              }
+              Path('daily_summary.json').write_text(
+                  json.dumps(public_summary, indent=2) + '\n',
+                  encoding='utf-8',
+              )
+          PY
+
+      - name: Upload aggregate report (no account-level data)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bellhaven-daily-aggregate-report
+          path: daily_summary.json
+          if-no-files-found: ignore
+          retention-days: 14
+
+      - name: Flag new changes or unresolved matches
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          report = json.loads(Path('latest_daily_report.json').read_text(encoding='utf-8'))
+          s = report['summary']
+          if report['status'] != 'PASS' or s['new_website_entries'] or s['removed_website_entries']:
+              raise SystemExit('Review required: unresolved matching or website changes. No CRM writes performed.')
+          print('Daily reconciliation passed. No new website entries, removed entries or matching issues.')
+          PY

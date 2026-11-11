@@ -1,0 +1,14 @@
+{
+  "website_facilities": 35,
+  "live_crm_accounts_after_corrections": 127,
+  "matched_facilities": 34,
+  "billing_address_exceptions": 1,
+  "unresolved_facility_matches": 0,
+  "review_decisions": {
+    "applied": 19,
+    "rejected": 1,
+    "needs_review": 7
+  },
+  "crm_approval_policy": "Human approval required before writes",
+  "daily_monitor_policy": "Read-only; never writes to CRM"
+}
